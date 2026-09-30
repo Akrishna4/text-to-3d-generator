@@ -1,0 +1,7 @@
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+python-dotenv==1.2.3
+gradio_client==2.7.1
+httpx==0.28.1
+slowapi==0.1.10
+pydantic==2.13.5
