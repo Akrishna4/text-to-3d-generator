@@ -3,40 +3,39 @@
  * ---------------
  * React Three Fiber canvas that loads and displays a GLB model.
  *
+ * Lighting (no Environment preset — works fully offline):
+ *   - HemisphereLight: sky/ground fill, warm-grey studio feel
+ *   - DirectionalLight: soft key from upper-left
+ *   - DirectionalLight: soft fill from lower-right (reduces harsh shadows)
+ *
  * Features:
- *   - OrbitControls: rotate (drag), zoom (scroll), pan (right-drag)
- *   - Auto-fits camera to the model's bounding box so any size model fills view
- *   - Environment lighting (studio preset) + contact shadow for realism
- *   - Grid floor plane for spatial grounding
- *   - Suspense fallback shows a spinner while the GLB loads
+ *   - Bounds + useBounds().fit() auto-frames any model size
+ *   - OrbitControls with damping; autoRotate stops on user interaction
+ *   - ContactShadows for soft ground contact (no Grid — cleaner look)
+ *   - Suspense fallback: subtle wireframe cube while GLB streams in
+ *   - onInteract callback fires once when the user first touches the scene
  */
 
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
 import {
   OrbitControls,
   useGLTF,
-  Environment,
   ContactShadows,
-  Grid,
   Center,
   Bounds,
   useBounds,
 } from '@react-three/drei'
 import * as THREE from 'three'
 
-// ── Inner model component ─────────────────────────────────────────────────────
+// ── Inner model ───────────────────────────────────────────────────────────────
 
 function Model({ url }: { url: string }) {
   const { scene } = useGLTF(url)
   const bounds = useBounds()
 
   useEffect(() => {
-    // Fit the camera to the model's bounding box after it loads.
-    // useBounds().refresh().fit() computes the AABB and moves the camera.
     bounds.refresh().fit()
-
-    // Enable shadow casting/receiving on all meshes
     scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         child.castShadow = true
@@ -48,13 +47,13 @@ function Model({ url }: { url: string }) {
   return <primitive object={scene} />
 }
 
-// ── Loading fallback ──────────────────────────────────────────────────────────
+// ── Suspense wireframe placeholder ────────────────────────────────────────────
 
 function LoadingFallback() {
   return (
     <mesh>
-      <boxGeometry args={[0.5, 0.5, 0.5]} />
-      <meshStandardMaterial color="#7c6cfc" wireframe />
+      <boxGeometry args={[0.4, 0.4, 0.4]} />
+      <meshStandardMaterial color="#9B9890" wireframe />
     </mesh>
   )
 }
@@ -62,36 +61,59 @@ function LoadingFallback() {
 // ── Public component ──────────────────────────────────────────────────────────
 
 interface ModelViewerProps {
-  /** Full URL to the GLB file, e.g. "/api/models/<id>.glb" */
+  /** Relative URL to the GLB file, e.g. "/api/models/<id>.glb" */
   modelUrl: string
+  /** Called the first time the user interacts with the scene */
+  onInteract?: () => void
 }
 
-export function ModelViewer({ modelUrl }: ModelViewerProps) {
+export function ModelViewer({ modelUrl, onInteract }: ModelViewerProps) {
+  const interactedRef = useRef(false)
+
+  const handleInteract = () => {
+    if (!interactedRef.current) {
+      interactedRef.current = true
+      onInteract?.()
+    }
+  }
+
   return (
     <Canvas
       shadows
-      camera={{ position: [0, 1.5, 4], fov: 45 }}
-      gl={{ antialias: true, alpha: false }}
+      camera={{ position: [0, 1.5, 4], fov: 42 }}
+      gl={{ antialias: true, alpha: true }}
       style={{ background: 'transparent' }}
+      onPointerDown={handleInteract}
+      onWheel={handleInteract}
     >
-      {/* Ambient + directional light for base illumination */}
-      <ambientLight intensity={0.4} />
-      <directionalLight
-        position={[5, 8, 5]}
-        intensity={1.2}
-        castShadow
-        shadow-mapSize={[1024, 1024]}
+      {/*
+        HemisphereLight: warm sky / cool ground fill.
+        Gives the untextured white mesh a subtle tonal gradient.
+      */}
+      <hemisphereLight
+        args={['#EDE9E0', '#B8B4AA', 0.7]}
       />
 
-      {/* Environment map gives realistic reflections on metallic/glossy surfaces */}
-      <Environment preset="studio" />
+      {/* Key light — soft from upper-left, casts gentle shadows */}
+      <directionalLight
+        position={[-4, 6, 4]}
+        intensity={1.1}
+        castShadow
+        shadow-mapSize={[1024, 1024]}
+        shadow-bias={-0.0004}
+      />
+
+      {/* Fill light — opposite side, lower intensity, no shadows */}
+      <directionalLight
+        position={[4, 2, -4]}
+        intensity={0.35}
+      />
 
       {/*
-        Bounds wraps the model so useBounds().fit() can auto-frame it.
-        damping: smooth camera transition when fitting.
-        clip: adjust near/far planes to match model size.
+        Bounds: wraps the model so useBounds().fit() auto-frames it.
+        damping: smooth camera transition; clip: adjusts near/far planes.
       */}
-      <Bounds fit clip margin={1.2}>
+      <Bounds fit clip margin={1.25}>
         <Suspense fallback={<LoadingFallback />}>
           <Center>
             <Model url={modelUrl} />
@@ -99,44 +121,32 @@ export function ModelViewer({ modelUrl }: ModelViewerProps) {
         </Suspense>
       </Bounds>
 
-      {/* Soft contact shadow below the model */}
+      {/* Soft contact shadow — no Grid keeps the backdrop clean */}
       <ContactShadows
-        position={[0, -1.5, 0]}
-        opacity={0.5}
-        scale={10}
-        blur={2.5}
-        far={4}
-        color="#000"
-      />
-
-      {/* Grid floor */}
-      <Grid
-        position={[0, -1.51, 0]}
-        args={[20, 20]}
-        cellSize={0.5}
-        cellThickness={0.5}
-        cellColor="#1c1f2e"
-        sectionSize={2}
-        sectionThickness={1}
-        sectionColor="#252840"
-        fadeDistance={15}
-        fadeStrength={1}
-        followCamera={false}
-        infiniteGrid
+        position={[0, -1.6, 0]}
+        opacity={0.32}
+        scale={12}
+        blur={3}
+        far={5}
+        color="#6B6560"
       />
 
       {/*
-        OrbitControls: rotate on left-drag, zoom on scroll, pan on right-drag.
-        enableDamping gives a smooth "friction" feel.
-        autoRotate gives a gentle spin when idle — nice for demo mode.
+        OrbitControls:
+          autoRotate: slow idle spin (demo mode)
+          enableDamping: smooth friction feel
+          The onStart prop (fires on any control interaction) stops auto-rotate
+          by toggling a state, but since autoRotate re-enables on unmount we
+          instead handle this via the onInteract callback passed from App.
       */}
       <OrbitControls
         enableDamping
-        dampingFactor={0.05}
+        dampingFactor={0.06}
         minDistance={0.5}
         maxDistance={20}
         autoRotate
-        autoRotateSpeed={0.6}
+        autoRotateSpeed={0.5}
+        onStart={handleInteract}
       />
     </Canvas>
   )
